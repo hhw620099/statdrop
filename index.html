@@ -715,25 +715,29 @@ function lightenHex(hex, amount) {
 function showPlayerTab(tab, athleteId, league, coreLeague) {
   const statsContent = document.getElementById('tab-stats-content');
   const logContent = document.getElementById('tab-gamelog-content');
+  const careerContent = document.getElementById('tab-career-content');
   const statsBtn = document.getElementById('tab-stats');
   const logBtn = document.getElementById('tab-gamelog');
+  const careerBtn = document.getElementById('tab-career');
   if (!statsContent) return;
-  const displayColor = statsBtn?.style.background || 'ff6b35';
+  // Get the color from the active button border
+  const col = statsBtn?.style.borderColor || 'ff6b35';
+  // Reset all
+  [statsContent, logContent, careerContent].forEach(el => { if(el) el.style.display = 'none'; });
+  [statsBtn, logBtn, careerBtn].forEach(btn => {
+    if (btn) { btn.style.background = 'transparent'; btn.style.color = col; }
+  });
+  // Activate selected
   if (tab === 'stats') {
     statsContent.style.display = 'block';
-    logContent.style.display = 'none';
-    statsBtn.style.background = statsBtn.style.borderColor;
-    statsBtn.style.color = '#000';
-    logBtn.style.background = 'transparent';
-    logBtn.style.color = logBtn.style.borderColor;
-  } else {
-    statsContent.style.display = 'none';
+    if (statsBtn) { statsBtn.style.background = col; statsBtn.style.color = '#000'; }
+  } else if (tab === 'gamelog') {
     logContent.style.display = 'block';
-    logBtn.style.background = logBtn.style.borderColor;
-    logBtn.style.color = '#000';
-    statsBtn.style.background = 'transparent';
-    statsBtn.style.color = statsBtn.style.borderColor;
+    if (logBtn) { logBtn.style.background = col; logBtn.style.color = '#000'; }
     loadGameLog(athleteId, league, coreLeague);
+  } else if (tab === 'career') {
+    careerContent.style.display = 'block';
+    if (careerBtn) { careerBtn.style.background = col; careerBtn.style.color = '#000'; }
   }
 }
 
@@ -962,6 +966,34 @@ async function renderPlayer(athleteId, league, pushing=true) {
       statsHTML = `<div class="info-msg">No season stats found. <a href="https://www.espn.com/search/results?q=${encodeURIComponent(name)}" target="_blank" style="color:#${displayColor}">View on ESPN →</a></div>`;
     }
 
+    // Career stats (no season param = all-time totals)
+    let careerHTML = '';
+    try {
+      const cr = await fetch(`https://sports.core.api.espn.com/v2/sports/${coreLeague}/athletes/${athleteId}/statistics?lang=en&region=us`);
+      if (cr.ok) {
+        const cd = await cr.json();
+        const ccats = (cd.splits?.categories || []).filter(c => (c.stats||[]).some(s => s.value && s.value !== 0 && s.value !== '0'));
+        if (ccats.length) {
+          careerHTML = ccats.map(cat => {
+            const sts = (cat.stats||[]).filter(s => s.value !== undefined && s.value !== null && s.value !== 0);
+            if (!sts.length) return '';
+            const boxes = sts.slice(0,12).map(s => {
+              let v = s.displayValue ?? s.value ?? '—';
+              if (typeof s.value === 'number' && !Number.isInteger(s.value)) {
+                const nm = (s.name||s.shortDisplayName||'').toLowerCase();
+                const isRate = nm.includes('pct')||nm.includes('avg')||nm.includes('era')||nm.includes('whip')||nm.includes('obp')||nm.includes('ops')||nm.includes('per')||nm.includes('rating');
+                v = isRate ? s.value.toFixed(3) : s.value.toFixed(1);
+              }
+              return `<div class="stat-box" style="border-color:#${displayColor}44"><div class="val" style="color:#${displayColor}">${v}</div><div class="lbl">${s.shortDisplayName||s.abbreviation||s.name||''}</div></div>`;
+            }).join('');
+            const catName = cat.displayName || cat.name || '';
+            return boxes ? `<div style="margin-bottom:18px"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:#aaa;letter-spacing:1px;margin-bottom:8px">${catName}</div><div class="stats-grid">${boxes}</div></div>` : '';
+          }).join('');
+        }
+      }
+    } catch(e) {}
+    if (!careerHTML) careerHTML = `<div class="info-msg">Career stats not available.</div>`;
+
     setModalContent(`
       ${backBtn('BACK')}
       <div class="info-card" style="border-color:#${teamColor}55;background:linear-gradient(160deg,#${teamAlt}22,#0d0d0d)">
@@ -978,13 +1010,15 @@ async function renderPlayer(athleteId, league, pushing=true) {
         </div>
         <!-- BIO CHIPS -->
         ${bio.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">${bio.map(b=>`<span style="background:#${displayColor}18;border:1px solid #${displayColor}44;border-radius:8px;padding:5px 12px;font-size:.9rem;color:#ddd">${b}</span>`).join('')}</div>` : ''}
-        <!-- TABS: STATS / GAME LOG -->
-        <div style="display:flex;gap:8px;margin-bottom:18px">
+        <!-- TABS: STATS / GAME LOG / CAREER -->
+        <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap">
           <button id="tab-stats" onclick="showPlayerTab('stats','${athleteId}','${league}','${coreLeague}')" style="font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:1px;padding:7px 18px;border-radius:20px;border:2px solid #${displayColor};background:#${displayColor};color:#000;cursor:pointer">SEASON STATS</button>
           <button id="tab-gamelog" onclick="showPlayerTab('gamelog','${athleteId}','${league}','${coreLeague}')" style="font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:1px;padding:7px 18px;border-radius:20px;border:2px solid #${displayColor};background:transparent;color:#${displayColor};cursor:pointer">GAME LOG</button>
+          <button id="tab-career" onclick="showPlayerTab('career','${athleteId}','${league}','${coreLeague}')" style="font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:1px;padding:7px 18px;border-radius:20px;border:2px solid #${displayColor};background:transparent;color:#${displayColor};cursor:pointer">CAREER</button>
         </div>
         <div id="tab-stats-content">${statsHTML}</div>
         <div id="tab-gamelog-content" style="display:none"><div id="gamelog-container"></div></div>
+        <div id="tab-career-content" style="display:none">${careerHTML}</div>
       </div>
     `);
   } catch(err) {
