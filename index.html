@@ -409,19 +409,21 @@ async function loadScores(league, btn) {
           🏆 ${seriesNote || 'PLAYOFFS'}${gameNum ? ` · Game ${gameNum} of ${totalGames}` : ''}${seriesSummary ? ` · ${seriesSummary}` : ''}
         </div>`;
       }
+      const awayC = bestDisplayColor((away?.team?.color||'ffffff').replace('#',''), (away?.team?.alternateColor||'aaaaaa').replace('#',''));
+      const homeC = bestDisplayColor((home?.team?.color||'ffffff').replace('#',''), (home?.team?.alternateColor||'aaaaaa').replace('#',''));
       return `<div class="game-card ${isLive?'live-game':''}" onclick="openGame('${ev.id}','${league}')">
         ${seriesHTML}
         <div class="game-status ${isFinal?'final':isLive?'live':''}">
           ${isLive?'<span class="live-dot"></span>LIVE · ':isFinal?'✅ FINAL · ':'🕐 '}${statusTxt}
         </div>
         <div class="team-row">
-          <div class="team-identity">${logoImg(awayLogo,'team-logo',away?.team?.shortDisplayName||'')}<span class="team-name-txt">${away?.team?.shortDisplayName||'Away'}</span></div>
-          <span class="team-score ${isFinal&&as2>hs?'winner':''}">${away?.score??'—'}</span>
+          <div class="team-identity">${logoImg(awayLogo,'team-logo',away?.team?.shortDisplayName||'')}<span class="team-name-txt" style="color:#${awayC}">${away?.team?.shortDisplayName||'Away'}</span></div>
+          <span class="team-score ${isFinal&&as2>hs?'winner':''}" style="${!(isFinal&&as2>hs)?'color:#'+awayC:''}">${away?.score??'—'}</span>
         </div>
         <hr class="divider"/>
         <div class="team-row">
-          <div class="team-identity">${logoImg(homeLogo,'team-logo',home?.team?.shortDisplayName||'')}<span class="team-name-txt">${home?.team?.shortDisplayName||'Home'}</span></div>
-          <span class="team-score ${isFinal&&hs>as2?'winner':''}">${home?.score??'—'}</span>
+          <div class="team-identity">${logoImg(homeLogo,'team-logo',home?.team?.shortDisplayName||'')}<span class="team-name-txt" style="color:#${homeC}">${home?.team?.shortDisplayName||'Home'}</span></div>
+          <span class="team-score ${isFinal&&hs>as2?'winner':''}" style="${!(isFinal&&hs>as2)?'color:#'+homeC:''}">${home?.score??'—'}</span>
         </div>
         <div class="click-hint">tap for box score + odds →</div>
       </div>`;
@@ -708,6 +710,132 @@ function lightenHex(hex, amount) {
   return [r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
 }
 
+
+
+function showPlayerTab(tab, athleteId, league, coreLeague) {
+  const statsContent = document.getElementById('tab-stats-content');
+  const logContent = document.getElementById('tab-gamelog-content');
+  const statsBtn = document.getElementById('tab-stats');
+  const logBtn = document.getElementById('tab-gamelog');
+  if (!statsContent) return;
+  const displayColor = statsBtn?.style.background || 'ff6b35';
+  if (tab === 'stats') {
+    statsContent.style.display = 'block';
+    logContent.style.display = 'none';
+    statsBtn.style.background = statsBtn.style.borderColor;
+    statsBtn.style.color = '#000';
+    logBtn.style.background = 'transparent';
+    logBtn.style.color = logBtn.style.borderColor;
+  } else {
+    statsContent.style.display = 'none';
+    logContent.style.display = 'block';
+    logBtn.style.background = logBtn.style.borderColor;
+    logBtn.style.color = '#000';
+    statsBtn.style.background = 'transparent';
+    statsBtn.style.color = statsBtn.style.borderColor;
+    loadGameLog(athleteId, league, coreLeague);
+  }
+}
+
+// ─── Game Log ─────────────────────────────────────────────────────────────────
+
+const GAMELOG_KEY_STATS = {
+  nba: ['PTS','REB','AST','STL','BLK','FG','3PM','MIN'],
+  nfl: ['PTS','YDS','TD','INT','ATT','REC','CAR','SACKS'],
+  mlb: ['H','HR','RBI','R','BB','SO','AVG','ERA','IP','SV'],
+  nhl: ['G','A','PTS','+/-','SOG','TOI','PIM','SV%'],
+  cfb: ['PTS','YDS','TD','INT','REC','CAR']
+};
+
+async function loadGameLog(athleteId, league, coreLeague) {
+  const container = document.getElementById('gamelog-container');
+  if (!container) return;
+  container.innerHTML = '<div class="loading" style="padding:20px">Loading game log...</div>';
+
+  try {
+    const currentYear = new Date().getFullYear();
+    // Try current season first, then last
+    let items = [], usedYear = currentYear;
+    for (const yr of [currentYear, currentYear-1]) {
+      const res = await fetch(`https://sports.core.api.espn.com/v2/sports/${coreLeague}/athletes/${athleteId}/eventlog?season=${yr}&lang=en&region=us`);
+      if (!res.ok) continue;
+      const d = await res.json();
+      items = d.events?.items || [];
+      if (items.length) { usedYear = yr; break; }
+    }
+
+    if (!items.length) {
+      container.innerHTML = '<div class="info-msg">No game log available.</div>';
+      return;
+    }
+
+    // Fetch stats + event info for each game (limit to last 20)
+    const recentItems = items.filter(i => i.played).slice(-20).reverse();
+    const keyStats = GAMELOG_KEY_STATS[league] || [];
+
+    const rows = await Promise.all(recentItems.map(async item => {
+      try {
+        // Get event info (date, opponent)
+        const eventRef = item.event?.$ref || '';
+        const statsRef = item.statistics?.$ref || '';
+        let dateStr = '', opponent = '', homeAway = '';
+        let statMap = {};
+
+        if (eventRef) {
+          const er = await fetch(eventRef);
+          const ed = await er.json();
+          const d = new Date(ed.date || ed.startDate || '');
+          dateStr = d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+          // Parse opponent from name like "Utah Jazz at Los Angeles Lakers"
+          const name = ed.shortName || ed.name || '';
+          opponent = name;
+          homeAway = '';
+        }
+
+        if (statsRef) {
+          const sr = await fetch(statsRef);
+          const sd = await sr.json();
+          const cats = sd.splits?.categories || [];
+          cats.forEach(cat => {
+            (cat.stats||[]).forEach(s => {
+              const key = s.shortDisplayName || s.abbreviation || s.name || '';
+              if (key && s.value !== undefined && s.value !== null && s.value !== 0) {
+                statMap[key] = s.displayValue ?? s.value;
+              }
+            });
+          });
+        }
+
+        const statCells = keyStats.map(k => `<td style="text-align:center">${statMap[k] ?? '—'}</td>`).join('');
+        return `<tr>
+          <td style="color:#aaa;white-space:nowrap">${dateStr}</td>
+          <td style="font-size:.85rem;color:#888;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${opponent}</td>
+          ${statCells}
+        </tr>`;
+      } catch(e) { return ''; }
+    }));
+
+    const validRows = rows.filter(Boolean);
+    if (!validRows.length) {
+      container.innerHTML = '<div class="info-msg">No game stats available.</div>';
+      return;
+    }
+
+    const headers = ['DATE','GAME',...keyStats].map(k=>`<th style="text-align:${k==='DATE'||k==='GAME'?'left':'center'}">${k}</th>`).join('');
+    container.innerHTML = `
+      <div style="font-size:.8rem;color:#666;margin-bottom:8px;font-family:'Rajdhani',sans-serif">${usedYear} Season · Last ${validRows.length} games</div>
+      <div style="overflow-x:auto">
+        <table class="players-table">
+          <thead><tr>${headers}</tr></thead>
+          <tbody>${validRows.join('')}</tbody>
+        </table>
+      </div>`;
+  } catch(err) {
+    console.error(err);
+    container.innerHTML = '<div class="info-msg">Game log not available for this player.</div>';
+  }
+}
+
 // ─── Player Profile ───────────────────────────────────────────────────────────
 
 // Map league -> ESPN core API league slug
@@ -850,8 +978,13 @@ async function renderPlayer(athleteId, league, pushing=true) {
         </div>
         <!-- BIO CHIPS -->
         ${bio.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">${bio.map(b=>`<span style="background:#${displayColor}18;border:1px solid #${displayColor}44;border-radius:8px;padding:5px 12px;font-size:.9rem;color:#ddd">${b}</span>`).join('')}</div>` : ''}
-        <!-- STATS -->
-        ${statsHTML}
+        <!-- TABS: STATS / GAME LOG -->
+        <div style="display:flex;gap:8px;margin-bottom:18px">
+          <button id="tab-stats" onclick="showPlayerTab('stats','${athleteId}','${league}','${coreLeague}')" style="font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:1px;padding:7px 18px;border-radius:20px;border:2px solid #${displayColor};background:#${displayColor};color:#000;cursor:pointer">SEASON STATS</button>
+          <button id="tab-gamelog" onclick="showPlayerTab('gamelog','${athleteId}','${league}','${coreLeague}')" style="font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:1px;padding:7px 18px;border-radius:20px;border:2px solid #${displayColor};background:transparent;color:#${displayColor};cursor:pointer">GAME LOG</button>
+        </div>
+        <div id="tab-stats-content">${statsHTML}</div>
+        <div id="tab-gamelog-content" style="display:none"><div id="gamelog-container"></div></div>
       </div>
     `);
   } catch(err) {
