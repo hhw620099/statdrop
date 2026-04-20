@@ -884,20 +884,30 @@ async function renderPlayer(athleteId, league, pushing=true) {
     const status = ath.status?.name || '';
     const draftInfo = ath.draft ? `${ath.draft.year} Draft Rd ${ath.draft.round} Pick ${ath.draft.selection}` : '';
 
-    // Resolve team name, color, logo from $ref
+    // Resolve team name, color, logo
+    // The $ref uses http:// which is blocked by browsers (mixed content)
+    // Instead: extract team ID from $ref and use the https site API
     let teamName = '', teamAbbr = '', logoUrl = null, teamColor = 'ff6b35', teamAlt = '1a1a2e';
     if (ath.team?.$ref) {
       try {
-        const tr = await fetch(ath.team.$ref);
-        const td = await tr.json();
-        teamName = td.displayName || td.name || '';
-        teamAbbr = (td.abbreviation || '').toLowerCase();
-        logoUrl = td.logos?.[0]?.href || `https://a.espncdn.com/i/teamlogos/${league}/500/${teamAbbr}.png`;
-        if (td.color) teamColor = td.color.replace('#','');
-        if (td.alternateColor) teamAlt = td.alternateColor.replace('#','');
-      } catch(e) {}
+        // Extract team ID from ref like ".../teams/13?..."
+        const teamIdMatch = ath.team.$ref.match(/\/teams\/(\d+)/);
+        const teamId = teamIdMatch?.[1];
+        if (teamId) {
+          // Use https site API which works from browser
+          const sportPath = SPORT_PATHS[league];
+          const tr = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${teamId}`);
+          const td = await tr.json();
+          const t = td.team || td;
+          teamName = t.displayName || t.name || '';
+          teamAbbr = (t.abbreviation || '').toLowerCase();
+          logoUrl = t.logos?.[0]?.href || t.logo || `https://a.espncdn.com/i/teamlogos/${league}/500/${teamAbbr}.png`;
+          if (t.color) teamColor = t.color.replace('#','');
+          if (t.alternateColor) teamAlt = t.alternateColor.replace('#','');
+        }
+      } catch(e) { console.warn('team fetch failed', e); }
     }
-    // Best visible color for stats/UI — picks alt if primary is too dark
+    // Best visible color — picks alt if primary is too dark to see on black
     const displayColor = bestDisplayColor(teamColor, teamAlt);
 
     // Resolve college name from $ref
@@ -1626,12 +1636,18 @@ async function openSoccerPlayer(athleteId, leagueSlug) {
     let teamName = '', teamColor = 'ff6b35', teamAlt = '1a1a2e', logoUrl = null;
     if (ath.team?.$ref) {
       try {
-        const tr = await fetch(ath.team.$ref);
-        const td = await tr.json();
-        teamName = td.displayName || td.name || '';
-        if (td.color) teamColor = td.color.replace('#','');
-        if (td.alternateColor) teamAlt = td.alternateColor.replace('#','');
-        logoUrl = td.logos?.[0]?.href || null;
+        // Extract team ID from ref, use https site API (http $ref blocked in browser)
+        const teamIdMatch = ath.team.$ref.match(/\/teams\/(\d+)/);
+        const teamId = teamIdMatch?.[1];
+        if (teamId) {
+          const tr = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${leagueSlug}/teams/${teamId}`);
+          const td = await tr.json();
+          const t = td.team || td;
+          teamName = t.displayName || t.name || '';
+          if (t.color) teamColor = t.color.replace('#','');
+          if (t.alternateColor) teamAlt = t.alternateColor.replace('#','');
+          logoUrl = t.logos?.[0]?.href || t.logo || null;
+        }
       } catch(e){}
     }
     const soccerDisplayColor = bestDisplayColor(teamColor, teamAlt);
