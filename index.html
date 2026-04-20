@@ -1668,7 +1668,7 @@ async function openSoccerPlayer(athleteId, leagueSlug) {
           const boxes = meaningful.map(s => {
             let v = s.displayValue ?? s.value ?? '—';
             if (typeof s.value === 'number' && !Number.isInteger(s.value)) v = s.value.toFixed(2);
-            return `<div class="stat-box" style="border:2px solid #${soccerDisplayColor}66;background:#${soccerDisplayColor}0e;box-shadow:0 0 8px #${soccerDisplayColor}22"><div class="val" style="color:#${soccerDisplayColor};font-size:2rem;font-weight:900">${v}</div><div class="lbl" style="color:#ddd;font-weight:700">${s.shortDisplayName||s.abbreviation||s.name||''</div></div>`;
+            return `<div class="stat-box" style="border:2px solid #${soccerDisplayColor}66;background:#${soccerDisplayColor}0e;box-shadow:0 0 8px #${soccerDisplayColor}22"><div class="val" style="color:#${soccerDisplayColor};font-size:2rem;font-weight:900">${v}</div><div class="lbl" style="color:#ddd;font-weight:700">${s.shortDisplayName||s.abbreviation||s.name||''}</div></div>`;
           }).join('');
           return boxes ? `<div style="margin-bottom:16px"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:#aaa;letter-spacing:1px;margin-bottom:8px">${catName}</div><div class="stats-grid">${boxes}</div></div>` : '';
         }).join('');
