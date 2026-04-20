@@ -675,38 +675,43 @@ async function renderGame(eventId, league, pushing=true) {
 
 // Returns perceived brightness 0-255 from a hex color
 function hexBrightness(hex) {
-  hex = hex.replace('#','');
+  hex = (hex||'').replace('#','');
+  if (!hex || hex.length < 6) return 0;
   if (hex.length === 3) hex = hex.split('').map(c=>c+c).join('');
   const r = parseInt(hex.slice(0,2),16);
   const g = parseInt(hex.slice(2,4),16);
   const b = parseInt(hex.slice(4,6),16);
-  // Perceived brightness formula
   return (r*299 + g*587 + b*114) / 1000;
 }
 
-// Given primary + alt colors, return the best visible display color
-// If primary is too dark, try alt. If both dark, lighten primary. If both too bright, darken.
+// Given primary + alt colors, return the best visible display color on dark bg
 function bestDisplayColor(primary, alt) {
-  const p = primary.replace('#','');
+  const p = (primary||'').replace('#','');
   const a = (alt||'').replace('#','');
   const pBright = hexBrightness(p);
   const aBright = a ? hexBrightness(a) : 0;
 
-  // If primary is bright enough (>80) use it
-  if (pBright > 80) return p;
-  // If alt is brighter and visible, use alt
-  if (a && aBright > pBright && aBright > 80) return a;
-  // Both dark — lighten the primary color
-  return lightenHex(p, 120);
+  // Threshold: needs to be bright enough to see on #0d0d0d background
+  const THRESHOLD = 100;
+
+  // If primary is bright enough, use it
+  if (pBright >= THRESHOLD) return p;
+  // If alt is bright enough and brighter than primary, use alt
+  if (a && aBright >= THRESHOLD) return a;
+  // If alt is brighter than primary (even if both dark), prefer alt
+  if (a && aBright > pBright && aBright > 50) return a;
+  // Both very dark — lighten the lighter one significantly
+  const base = aBright > pBright ? a : p;
+  return lightenHex(base, 140);
 }
 
 // Lighten a hex color by adding 'amount' to each channel
 function lightenHex(hex, amount) {
-  hex = hex.replace('#','');
+  hex = (hex||'ffffff').replace('#','');
   if (hex.length === 3) hex = hex.split('').map(c=>c+c).join('');
-  const r = Math.min(255, parseInt(hex.slice(0,2),16) + amount);
-  const g = Math.min(255, parseInt(hex.slice(2,4),16) + amount);
-  const b = Math.min(255, parseInt(hex.slice(4,6),16) + amount);
+  const r = Math.min(255, parseInt(hex.slice(0,2)||'0',16) + amount);
+  const g = Math.min(255, parseInt(hex.slice(2,4)||'0',16) + amount);
+  const b = Math.min(255, parseInt(hex.slice(4,6)||'0',16) + amount);
   return [r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
 }
 
@@ -918,80 +923,90 @@ async function renderPlayer(athleteId, league, pushing=true) {
       status && status !== 'Active' && `⚡ ${status}`
     ].filter(Boolean);
 
-    // Fetch season stats — current year first, fall back to last year
-    const currentYear = new Date().getFullYear();
-    let statsHTML = '', seasonLabel = '';
+    // Fetch stats via overview endpoint — gives clean Season vs Career splits
+    // Also works for soccer (per-competition splits)
+    const isSoccer = league === 'nba' ? false : coreLeague.includes('soccer');
+    const overviewPath = isSoccer
+      ? `https://site.api.espn.com/apis/common/v3/sports/soccer/athletes/${athleteId}/overview`
+      : `https://site.api.espn.com/apis/common/v3/sports/${SPORT_PATHS[league].replace('/','/')}/athletes/${athleteId}/overview`;
 
-    for (const yr of [currentYear, currentYear-1]) {
-      try {
-        const sr = await fetch(`https://sports.core.api.espn.com/v2/sports/${coreLeague}/athletes/${athleteId}/statistics?season=${yr}&lang=en&region=us`);
-        if (!sr.ok) continue;
-        const sd = await sr.json();
-        const cats = sd.splits?.categories || [];
-        if (!cats.length) continue;
+    // Map league to correct overview URL
+    const overviewUrls = {
+      nba: `https://site.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/${athleteId}/overview`,
+      nfl: `https://site.api.espn.com/apis/common/v3/sports/football/nfl/athletes/${athleteId}/overview`,
+      mlb: `https://site.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/${athleteId}/overview`,
+      nhl: `https://site.api.espn.com/apis/common/v3/sports/hockey/nhl/athletes/${athleteId}/overview`,
+      cfb: `https://site.api.espn.com/apis/common/v3/sports/football/college-football/athletes/${athleteId}/overview`,
+      soccer: `https://site.api.espn.com/apis/common/v3/sports/soccer/athletes/${athleteId}/overview`,
+    };
+    const overviewUrl = overviewUrls[league] || overviewUrls.nba;
 
-        // Filter to meaningful categories (skip empty ones)
-        const filledCats = cats.filter(c => (c.stats||[]).some(s => {
-          const v = s.value;
-          return v !== undefined && v !== null && v !== 0 && v !== '0' && v !== '';
-        }));
-        if (!filledCats.length) continue;
-
-        const isLast = yr < currentYear;
-        seasonLabel = `${yr} ${isLast ? 'Season (Last)' : 'Season (Current)'}`;
-
-        const sections = filledCats.map(cat => {
-          const sts = (cat.stats || []).filter(s => s.value !== undefined && s.value !== null);
-          if (!sts.length) return '';
-          const boxes = sts.slice(0, 12).map(s => {
-            let v = s.displayValue ?? s.value ?? '—';
-            // Format floats nicely
-            if (typeof s.value === 'number' && !Number.isInteger(s.value)) {
-              const nm = (s.name || s.shortDisplayName || '').toLowerCase();
-              const isRate = nm.includes('pct') || nm.includes('avg') || nm.includes('era') || nm.includes('whip') || nm.includes('obp') || nm.includes('ops') || nm.includes('per') || nm.includes('rating');
-              v = isRate ? s.value.toFixed(3) : s.value.toFixed(1);
-            }
-            const lbl = s.shortDisplayName || s.abbreviation || s.name || '';
-            return `<div class="stat-box" style="border-color:#${displayColor}44"><div class="val" style="color:#${displayColor}">${v}</div><div class="lbl">${lbl}</div></div>`;
-          }).join('');
-          const catName = cat.displayName || cat.name || '';
-          return boxes ? `<div style="margin-bottom:18px"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:#aaa;letter-spacing:1px;margin-bottom:8px">${catName}</div><div class="stats-grid">${boxes}</div></div>` : '';
-        }).join('');
-
-        if (sections.trim()) { statsHTML = sections; break; }
-      } catch(e) { continue; }
+    function buildStatBoxes(labels, values, dc) {
+      if (!labels?.length || !values?.length) return '';
+      // Only show key/important stats
+      const KEY = {
+        nba: ['GP','PTS','REB','AST','STL','BLK','FG%','3P%','FT%','TO'],
+        nfl: ['CMP%','YDS','TD','INT','RTG','G','REC','AVG','SACK'],
+        mlb: ['GP','HR','RBI','AVG','OBP','H','R','ERA','SO','SV'],
+        nhl: ['GP','G','A','PTS','+/-','S','PPG'],
+        cfb: ['CMP%','YDS','TD','INT','REC','AVG'],
+        soccer: ['G','A','STRT','SH','YC','FC','APP'],
+      };
+      const keyList = KEY[league] || [];
+      return labels.map((lbl, i) => {
+        const v = values[i] ?? '—';
+        if (v === '0' || v === 0 || v === '' || v === '--') return '';
+        const isKey = keyList.includes(lbl);
+        return `<div class="stat-box" style="border-color:#${dc}${isKey?'88':'33'};${isKey?'box-shadow:0 0 8px #'+dc+'22':''}">
+          <div class="val" style="color:#${dc};font-size:${isKey?'2rem':'1.5rem'}">${v}</div>
+          <div class="lbl" style="${isKey?'font-weight:700;color:#ccc':''}">${lbl}</div>
+        </div>`;
+      }).filter(Boolean).join('');
     }
 
-    if (!statsHTML) {
-      statsHTML = `<div class="info-msg">No season stats found. <a href="https://www.espn.com/search/results?q=${encodeURIComponent(name)}" target="_blank" style="color:#${displayColor}">View on ESPN →</a></div>`;
-    }
-
-    // Career stats (no season param = all-time totals)
-    let careerHTML = '';
+    let statsHTML = '', careerHTML = '', seasonLabel = '';
     try {
-      const cr = await fetch(`https://sports.core.api.espn.com/v2/sports/${coreLeague}/athletes/${athleteId}/statistics?lang=en&region=us`);
-      if (cr.ok) {
-        const cd = await cr.json();
-        const ccats = (cd.splits?.categories || []).filter(c => (c.stats||[]).some(s => s.value && s.value !== 0 && s.value !== '0'));
-        if (ccats.length) {
-          careerHTML = ccats.map(cat => {
-            const sts = (cat.stats||[]).filter(s => s.value !== undefined && s.value !== null && s.value !== 0);
-            if (!sts.length) return '';
-            const boxes = sts.slice(0,12).map(s => {
-              let v = s.displayValue ?? s.value ?? '—';
-              if (typeof s.value === 'number' && !Number.isInteger(s.value)) {
-                const nm = (s.name||s.shortDisplayName||'').toLowerCase();
-                const isRate = nm.includes('pct')||nm.includes('avg')||nm.includes('era')||nm.includes('whip')||nm.includes('obp')||nm.includes('ops')||nm.includes('per')||nm.includes('rating');
-                v = isRate ? s.value.toFixed(3) : s.value.toFixed(1);
-              }
-              return `<div class="stat-box" style="border-color:#${displayColor}44"><div class="val" style="color:#${displayColor}">${v}</div><div class="lbl">${s.shortDisplayName||s.abbreviation||s.name||''}</div></div>`;
+      const or = await fetch(overviewUrl);
+      if (or.ok) {
+        const od = await or.json();
+        const st = od.statistics || {};
+        const labels = st.labels || st.names || [];
+        const splits = st.splits || [];
+
+        if (splits.length && labels.length) {
+          // Find season split (Regular Season, or most recent competition for soccer)
+          const seasonSplit = splits.find(s =>
+            s.displayName?.toLowerCase().includes('regular') ||
+            s.displayName?.toLowerCase().includes('season')
+          ) || splits[0];
+          const careerSplit = splits.find(s => s.displayName?.toLowerCase().includes('career'));
+
+          if (seasonSplit) {
+            seasonLabel = seasonSplit.displayName;
+            const boxes = buildStatBoxes(labels, seasonSplit.stats, displayColor);
+            statsHTML = boxes ? `<div class="stats-grid">${boxes}</div>` : '';
+          }
+
+          // For soccer show all competition splits instead of career
+          if (league !== 'nba' && league !== 'nfl' && league !== 'mlb' && league !== 'nhl' && !careerSplit) {
+            // Soccer: show per-competition table
+            const rows = splits.map(sp => {
+              const vals = sp.stats || [];
+              const cells = labels.slice(0,8).map((l,i) => `<td style="text-align:center">${vals[i]??'—'}</td>`).join('');
+              return `<tr><td style="color:#${displayColor};font-weight:600">${sp.displayName||''}</td>${cells}</tr>`;
             }).join('');
-            const catName = cat.displayName || cat.name || '';
-            return boxes ? `<div style="margin-bottom:18px"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:#aaa;letter-spacing:1px;margin-bottom:8px">${catName}</div><div class="stats-grid">${boxes}</div></div>` : '';
-          }).join('');
+            const headers = ['Competition',...labels.slice(0,8)].map(l=>`<th style="text-align:${l==='Competition'?'left':'center'}">${l}</th>`).join('');
+            careerHTML = `<div style="overflow-x:auto"><table class="players-table"><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table></div>`;
+            if (!statsHTML) statsHTML = careerHTML;
+          } else if (careerSplit) {
+            const boxes = buildStatBoxes(labels, careerSplit.stats, displayColor);
+            careerHTML = boxes ? `<div class="stats-grid">${boxes}</div>` : '';
+          }
         }
       }
-    } catch(e) {}
+    } catch(e) { console.error('overview fetch failed', e); }
+
+    if (!statsHTML) statsHTML = `<div class="info-msg">Season stats not available. <a href="https://www.espn.com/search/results?q=${encodeURIComponent(name)}" target="_blank" style="color:#${displayColor}">View on ESPN →</a></div>`;
     if (!careerHTML) careerHTML = `<div class="info-msg">Career stats not available.</div>`;
 
     setModalContent(`
