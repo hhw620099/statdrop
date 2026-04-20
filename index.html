@@ -963,7 +963,7 @@ async function renderPlayer(athleteId, league, pushing=true) {
       const KEY = {
         nba: ['GP','PTS','REB','AST','STL','BLK','FG%','3P%','FT%','TO'],
         nfl: ['CMP%','YDS','TD','INT','RTG','G','REC','AVG','SACK'],
-        mlb: ['GP','HR','RBI','AVG','OBP','SLG','H','R','BB','SO','ERA','IP','SV','WHIP'],
+        mlb: ['GP','HR','RBI','H','R','BB','SO','2B','3B','AB','ERA','IP','SV'],
         nhl: ['GP','G','A','PTS','+/-','S','PPG'],
         cfb: ['CMP%','YDS','TD','INT','REC','AVG'],
         soccer: ['G','A','STRT','SH','YC','FC','APP'],
@@ -1645,25 +1645,22 @@ async function openSoccerPlayer(athleteId, leagueSlug) {
     const teamIdMatch = teamRef.match(/\/teams\/(\d+)/);
     teamId = teamIdMatch?.[1];
     if (teamId) {
-      try {
-        const tr = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${leagueSlug}/teams/${teamId}`);
-        const td = await tr.json();
-        const t = td.team || td;
-        teamName = t.displayName || t.name || '';
-        if (t.color) teamColor = t.color.replace('#','');
-        if (t.alternateColor) teamAlt = t.alternateColor.replace('#','');
-        logoUrl = t.logos?.[0]?.href || t.logo || null;
-      } catch(e) {
-        // Fallback: try without league slug
+      // Try multiple league slugs since player's club may be in different league
+      const leaguesToTry = [leagueSlug, 'eng.1', 'usa.1', 'esp.1', 'ger.1', 'ita.1', 'fra.1', 'uefa.champions', 'eng.2'];
+      for (const lg of [...new Set(leaguesToTry)]) {
         try {
-          const tr2 = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/teams/${teamId}`);
-          const td2 = await tr2.json();
-          const t2 = td2.team || td2;
-          teamName = t2.displayName || t2.name || '';
-          if (t2.color) teamColor = t2.color.replace('#','');
-          if (t2.alternateColor) teamAlt = t2.alternateColor.replace('#','');
-          logoUrl = t2.logos?.[0]?.href || t2.logo || null;
-        } catch(e2){}
+          const tr = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${lg}/teams/${teamId}`);
+          if (!tr.ok) continue;
+          const td = await tr.json();
+          const t = td.team || td;
+          if (t.displayName) {
+            teamName = t.displayName || t.name || '';
+            if (t.color) teamColor = t.color.replace('#','');
+            if (t.alternateColor) teamAlt = t.alternateColor.replace('#','');
+            logoUrl = t.logos?.[0]?.href || t.logo || null;
+            break;
+          }
+        } catch(e) { continue; }
       }
     }
     const soccerDisplayColor = bestDisplayColor(teamColor, teamAlt);
@@ -1687,9 +1684,17 @@ async function openSoccerPlayer(athleteId, leagueSlug) {
         const labels = st.labels || [];
         const splits = st.splits || [];
         if (splits.length && labels.length) {
-          // Season stats: show most recent club competition (not international)
-          const clubSplits = splits.filter(sp => !sp.displayName?.toLowerCase().includes('international') && !sp.displayName?.toLowerCase().includes('friendly'));
-          const mainSplit = clubSplits[0] || splits[0];
+          // Season stats: pick the club competition with most appearances (starts)
+          const clubSplits = splits.filter(sp => {
+            const dn = sp.displayName?.toLowerCase() || '';
+            return !dn.includes('international') && !dn.includes('friendly') && !dn.includes('national');
+          });
+          // Pick split with highest STRT value (most appearances)
+          const mainSplit = clubSplits.sort((a,b) => {
+            const aStrt = parseInt(a.stats?.[0]||0);
+            const bStrt = parseInt(b.stats?.[0]||0);
+            return bStrt - aStrt;
+          })[0] || splits[0];
           // Build stat boxes for main split
           const buildSoccer = (sp) => {
             if (!sp) return '';
