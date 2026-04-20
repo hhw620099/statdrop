@@ -51,11 +51,11 @@
     .click-hint{font-size:.75rem;color:#555;text-align:right;margin-top:8px}
 
     /* SHARED CARD */
-    .info-card{background:#1a1a2e;border-radius:16px;padding:28px;border:1px solid #2a2a4a;margin-bottom:24px}
+    .info-card{background:#1a1a2e;border-radius:16px;padding:28px;border:1px solid transparent;margin-bottom:24px}
     .info-card h2{font-family:'Bebas Neue',sans-serif;font-size:2.2rem;color:#ff6b35;letter-spacing:2px;margin-bottom:4px}
     .meta{color:#aaa;font-size:1rem;margin-bottom:18px}
     .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:12px}
-    .stat-box{background:#0d0d1a;border-radius:10px;padding:14px;text-align:center;border:1px solid #2a2a4a}
+    .stat-box{background:#0d0d1a;border-radius:10px;padding:14px;text-align:center;border:1px solid transparent}
     .stat-box .val{font-size:1.8rem;color:#ff6b35;letter-spacing:1px}
     .stat-box .lbl{font-size:.75rem;color:#888;margin-top:2px;text-transform:uppercase;letter-spacing:.5px;font-family:'Rajdhani',sans-serif}
     .season-tag{display:inline-block;background:#ff6b35;color:#fff;font-size:.75rem;padding:2px 10px;border-radius:20px;margin-left:8px;font-family:'Rajdhani',sans-serif;vertical-align:middle}
@@ -957,9 +957,9 @@ async function renderPlayer(athleteId, league, pushing=true) {
         const v = values[i] ?? '—';
         if (v === '0' || v === 0 || v === '' || v === '--') return '';
         const isKey = keyList.includes(lbl);
-        return `<div class="stat-box" style="border-color:#${dc}${isKey?'88':'33'};${isKey?'box-shadow:0 0 8px #'+dc+'22':''}">
-          <div class="val" style="color:#${dc};font-size:${isKey?'2rem':'1.5rem'}">${v}</div>
-          <div class="lbl" style="${isKey?'font-weight:700;color:#ccc':''}">${lbl}</div>
+        return `<div class="stat-box" style="border:${isKey?'2px':'1px'} solid #${dc}${isKey?'99':'44'};background:#${dc}0${isKey?'e':'7'};${isKey?'box-shadow:0 0 10px #'+dc+'33':''}">
+          <div class="val" style="color:#${dc};font-size:${isKey?'2.1rem':'1.5rem'};font-weight:900">${v}</div>
+          <div class="lbl" style="color:${isKey?'#ddd':'#999'};font-weight:${isKey?'700':'400'}">${lbl}</div>
         </div>`;
       }).filter(Boolean).join('');
     }
@@ -1668,7 +1668,7 @@ async function openSoccerPlayer(athleteId, leagueSlug) {
           const boxes = meaningful.map(s => {
             let v = s.displayValue ?? s.value ?? '—';
             if (typeof s.value === 'number' && !Number.isInteger(s.value)) v = s.value.toFixed(2);
-            return `<div class="stat-box" style="border-color:#${soccerDisplayColor}44"><div class="val" style="color:#${soccerDisplayColor}">${v}</div><div class="lbl">${s.shortDisplayName||s.abbreviation||s.name||''}</div></div>`;
+            return `<div class="stat-box" style="border:2px solid #${soccerDisplayColor}66;background:#${soccerDisplayColor}0e;box-shadow:0 0 8px #${soccerDisplayColor}22"><div class="val" style="color:#${soccerDisplayColor};font-size:2rem;font-weight:900">${v}</div><div class="lbl" style="color:#ddd;font-weight:700">${s.shortDisplayName||s.abbreviation||s.name||''</div></div>`;
           }).join('');
           return boxes ? `<div style="margin-bottom:16px"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:#aaa;letter-spacing:1px;margin-bottom:8px">${catName}</div><div class="stats-grid">${boxes}</div></div>` : '';
         }).join('');
