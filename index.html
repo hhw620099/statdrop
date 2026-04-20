@@ -1639,22 +1639,32 @@ async function openSoccerPlayer(athleteId, leagueSlug) {
     const birthplace = bp ? [bp.city, bp.state, bp.country].filter(Boolean).join(', ') : '';
     const nationality = ath.citizenship || ath.nationality || '';
 
-    let teamName = '', teamColor = 'ff6b35', teamAlt = '1a1a2e', logoUrl = null;
-    if (ath.team?.$ref) {
+    // Get team color via site API (http $ref blocked in browser)
+    let teamName = '', teamColor = 'ff6b35', teamAlt = '1a1a2e', logoUrl = null, teamId = null;
+    const teamRef = ath.team?.$ref || ath.defaultTeam?.$ref || '';
+    const teamIdMatch = teamRef.match(/\/teams\/(\d+)/);
+    teamId = teamIdMatch?.[1];
+    if (teamId) {
       try {
-        // Extract team ID from ref, use https site API (http $ref blocked in browser)
-        const teamIdMatch = ath.team.$ref.match(/\/teams\/(\d+)/);
-        const teamId = teamIdMatch?.[1];
-        if (teamId) {
-          const tr = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${leagueSlug}/teams/${teamId}`);
-          const td = await tr.json();
-          const t = td.team || td;
-          teamName = t.displayName || t.name || '';
-          if (t.color) teamColor = t.color.replace('#','');
-          if (t.alternateColor) teamAlt = t.alternateColor.replace('#','');
-          logoUrl = t.logos?.[0]?.href || t.logo || null;
-        }
-      } catch(e){}
+        const tr = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${leagueSlug}/teams/${teamId}`);
+        const td = await tr.json();
+        const t = td.team || td;
+        teamName = t.displayName || t.name || '';
+        if (t.color) teamColor = t.color.replace('#','');
+        if (t.alternateColor) teamAlt = t.alternateColor.replace('#','');
+        logoUrl = t.logos?.[0]?.href || t.logo || null;
+      } catch(e) {
+        // Fallback: try without league slug
+        try {
+          const tr2 = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/teams/${teamId}`);
+          const td2 = await tr2.json();
+          const t2 = td2.team || td2;
+          teamName = t2.displayName || t2.name || '';
+          if (t2.color) teamColor = t2.color.replace('#','');
+          if (t2.alternateColor) teamAlt = t2.alternateColor.replace('#','');
+          logoUrl = t2.logos?.[0]?.href || t2.logo || null;
+        } catch(e2){}
+      }
     }
     const soccerDisplayColor = bestDisplayColor(teamColor, teamAlt);
 
@@ -1663,62 +1673,92 @@ async function openSoccerPlayer(athleteId, leagueSlug) {
       height && `📏 ${height}`,
       weight && `⚖️ ${weight}`,
       age && `🎂 Age ${age}`,
-      nationality && `🏦 ${nationality}`,
+      nationality && `🏳️ ${nationality}`,
       birthplace && `📍 ${birthplace}`
     ].filter(Boolean);
 
-    // Try stats — current season then last
-    let statsHTML = '', soccerSeasonLabel = '';
-    const currentYear = new Date().getFullYear();
-    for (const yr of [currentYear, currentYear - 1]) {
-      try {
-        const sr = await fetch(`https://sports.core.api.espn.com/v2/sports/soccer/leagues/${leagueSlug}/athletes/${athleteId}/statistics?season=${yr}&lang=en&region=us`);
-        if (!sr.ok) continue;
-        const sd = await sr.json();
-        const cats = sd.splits?.categories || [];
-        const filled = cats.filter(c => (c.stats||[]).some(s => s.value && s.value !== 0 && s.value !== '0'));
-        if (!filled.length) continue;
-        const isLast = yr < currentYear;
-        soccerSeasonLabel = `${yr-1}/${String(yr).slice(2)} Season${isLast?' (Last)':' (Current)'}`;
-        statsHTML = filled.map(cat => {
-          const catName = cat.displayName || cat.name || '';
-          const meaningful = (cat.stats||[]).filter(s => {
-            const v = s.value;
-            return v !== undefined && v !== null && v !== 0 && v !== '0' && !String(s.name||'').toLowerCase().includes('rating');
-          }).slice(0, 12);
-          if (!meaningful.length) return '';
-          const boxes = meaningful.map(s => {
-            let v = s.displayValue ?? s.value ?? '—';
-            if (typeof s.value === 'number' && !Number.isInteger(s.value)) v = s.value.toFixed(2);
-            return `<div class="stat-box" style="border:2px solid #${soccerDisplayColor}66;background:#${soccerDisplayColor}0e;box-shadow:0 0 8px #${soccerDisplayColor}22"><div class="val" style="color:#${soccerDisplayColor};font-size:2rem;font-weight:900">${v}</div><div class="lbl" style="color:#ddd;font-weight:700">${s.shortDisplayName||s.abbreviation||s.name||''}</div></div>`;
-          }).join('');
-          return boxes ? `<div style="margin-bottom:16px"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:#aaa;letter-spacing:1px;margin-bottom:8px">${catName}</div><div class="stats-grid">${boxes}</div></div>` : '';
-        }).join('');
-        if (statsHTML.trim()) break;
-      } catch(e) { continue; }
-    }
+    // Stats via overview endpoint (same as other sports - gives per-competition splits)
+    let statsHTML = '', careerHTML = '';
+    try {
+      const or = await fetch(`https://site.api.espn.com/apis/common/v3/sports/soccer/athletes/${athleteId}/overview`);
+      if (or.ok) {
+        const od = await or.json();
+        const st = od.statistics || {};
+        const labels = st.labels || [];
+        const splits = st.splits || [];
+        if (splits.length && labels.length) {
+          // Season stats: show most recent club competition (not international)
+          const clubSplits = splits.filter(sp => !sp.displayName?.toLowerCase().includes('international') && !sp.displayName?.toLowerCase().includes('friendly'));
+          const mainSplit = clubSplits[0] || splits[0];
+          // Build stat boxes for main split
+          const buildSoccer = (sp) => {
+            if (!sp) return '';
+            return labels.map((lbl,i) => {
+              const v = sp.stats?.[i];
+              if (!v || v === '0' || v === 0) return '';
+              const isKey = ['G','A','STRT','SH','APP'].includes(lbl);
+              return `<div class="stat-box" style="border:${isKey?'2px':'1px'} solid #${soccerDisplayColor}${isKey?'99':'44'};background:#${soccerDisplayColor}${isKey?'18':'0a'};${isKey?'box-shadow:0 0 10px #'+soccerDisplayColor+'33':''}">
+                <div class="val" style="color:#${soccerDisplayColor};font-size:${isKey?'2.1rem':'1.5rem'};font-weight:900">${v}</div>
+                <div class="lbl" style="color:${isKey?'#ddd':'#999'};font-weight:${isKey?'700':'400'}">${lbl}</div>
+              </div>`;
+            }).filter(Boolean).join('');
+          };
+          if (mainSplit) {
+            const boxes = buildSoccer(mainSplit);
+            statsHTML = boxes ? `<div style="font-size:.8rem;color:#888;margin-bottom:8px">${mainSplit.displayName}</div><div class="stats-grid">${boxes}</div>` : '';
+          }
+          // Career/all competitions table
+          if (clubSplits.length > 1 || splits.length > 1) {
+            const rows = splits.map(sp => {
+              const cells = labels.slice(0,8).map((l,i)=>`<td style="text-align:center">${sp.stats?.[i]??'—'}</td>`).join('');
+              return `<tr><td style="color:#${soccerDisplayColor};font-weight:600;white-space:nowrap">${sp.displayName||''}</td>${cells}</tr>`;
+            }).join('');
+            const headers = ['Competition',...labels.slice(0,8)].map(l=>`<th style="text-align:${l==='Competition'?'left':'center'}">${l}</th>`).join('');
+            careerHTML = `<div style="overflow-x:auto"><table class="players-table"><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table></div>`;
+          }
+        }
+      }
+    } catch(e) { console.error('soccer stats failed', e); }
 
-    if (!statsHTML) statsHTML = `<div class="info-msg">Season stats not available for this player.</div>`;
+    if (!statsHTML) statsHTML = `<div class="info-msg">Stats not available for this player.</div>`;
+    if (!careerHTML) careerHTML = `<div class="info-msg">Full competition breakdown not available.</div>`;
 
     setModalContent(`
       ${backBtn('BACK')}
-      <div class="info-card" style="border-color:#${teamColor}55;background:linear-gradient(160deg,#${teamAlt}22,#0d0d0d)">
+      <div class="info-card" style="border:2px solid #${soccerDisplayColor}55;background:linear-gradient(160deg,#${teamAlt}22,#0d0d0d)">
         <div style="background:linear-gradient(135deg,#${teamColor},#${teamAlt});border-radius:12px;padding:20px 24px;margin-bottom:20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
           <img src="${headshot}" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,0.4);flex-shrink:0" onerror="this.style.display='none'"/>
-          ${logoUrl?`<img src="${logoUrl}" style="width:52px;height:52px;object-fit:contain;opacity:.9;flex-shrink:0" onerror="this.style.display='none'"/>`:''}
-          <div>
+          ${logoUrl?`<img src="${logoUrl}" style="width:52px;height:52px;object-fit:contain;opacity:.9;flex-shrink:0" onerror="this.style.display='none'"/>`:''}<div>
             <div style="font-family:'Bebas Neue',sans-serif;font-size:2.4rem;color:#fff;letter-spacing:2px">${name} ${jersey}</div>
-            <div style="color:rgba(255,255,255,.75);font-size:1rem">${teamName}
-              ${soccerSeasonLabel?`<span style="background:rgba(0,0,0,.3);color:#fff;font-size:.75rem;padding:2px 10px;border-radius:20px;margin-left:8px">${soccerSeasonLabel}</span>`:''}
-            </div>
+            <div style="color:rgba(255,255,255,.75);font-size:1rem">${teamName}</div>
           </div>
         </div>
         ${bio.length?`<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">${bio.map(b=>`<span style="background:#${soccerDisplayColor}18;border:1px solid #${soccerDisplayColor}44;border-radius:8px;padding:5px 12px;font-size:.9rem;color:#ddd">${b}</span>`).join('')}</div>`:''}
-        ${statsHTML}
+        <!-- TABS -->
+        <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap">
+          <button id="stab-season" onclick="switchSoccerTab('season')" style="font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:1px;padding:7px 18px;border-radius:20px;border:2px solid #${soccerDisplayColor};background:#${soccerDisplayColor};color:#000;cursor:pointer">SEASON STATS</button>
+          <button id="stab-all" onclick="switchSoccerTab('all')" style="font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:1px;padding:7px 18px;border-radius:20px;border:2px solid #${soccerDisplayColor};background:transparent;color:#${soccerDisplayColor};cursor:pointer">ALL COMPETITIONS</button>
+        </div>
+        <div id="stab-season-content">${statsHTML}</div>
+        <div id="stab-all-content" style="display:none">${careerHTML}</div>
       </div>`);
   } catch(err) {
+    console.error(err);
     setModalContent(`${backBtn()}<div class="error-msg">⚠️ Could not load player.</div>`);
   }
+}
+
+function switchSoccerTab(tab) {
+  const s = document.getElementById('stab-season-content');
+  const a = document.getElementById('stab-all-content');
+  const sb = document.getElementById('stab-season');
+  const ab = document.getElementById('stab-all');
+  if (!s) return;
+  const col = sb?.style.borderColor || 'ff6b35';
+  s.style.display = tab==='season' ? 'block' : 'none';
+  a.style.display = tab==='all' ? 'block' : 'none';
+  if (tab==='season') { sb.style.background=col; sb.style.color='#000'; ab.style.background='transparent'; ab.style.color=col; }
+  else { ab.style.background=col; ab.style.color='#000'; sb.style.background='transparent'; sb.style.color=col; }
 }
 
 async function openSoccerTeam(teamId, leagueSlug) {
