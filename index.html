@@ -605,7 +605,13 @@ async function renderGame(eventId, league, pushing=true) {
             const pos = ath.athlete?.position?.abbreviation || '';
             const stats = ath.stats || [];
             const dnp = ath.didNotPlay;
-            return `<tr class="clickable-row" onclick="openPlayer('${pid}','${league}')" title="View ${pName}'s stats" style="${dnp?'opacity:0.4':''}"><td style="color:#${tDisplay};font-weight:700">🔍 ${pName}</td><td style="color:#888">${pos}</td>${stats.map(s=>`<td>${s}</td>`).join('')}</tr>`;
+            const headshotUrl = ath.athlete?.headshot?.href || `https://a.espncdn.com/i/headshots/${league}/players/full/${pid}.png`;
+            return `<tr class="clickable-row" onclick="openPlayer('${pid}','${league}')" title="View ${pName}'s profile" style="${dnp?'opacity:0.4':''}">
+              <td style="color:#${tDisplay};font-weight:700;white-space:nowrap">
+                <img src="${headshotUrl}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid #${tDisplay}55;margin-right:6px;vertical-align:middle" onerror="this.style.display='none'"/>${pName}
+              </td>
+              <td style="color:#888">${pos}</td>${stats.map(s=>`<td>${s}</td>`).join('')}
+            </tr>`;
           }).join('');
           const headers = ['Player','Pos',...labels].map(l=>`<th>${l}</th>`).join('');
           return `<div class="team-section">
@@ -1566,8 +1572,8 @@ async function openSoccerGame(eventId, leagueSlug) {
             const pos = p.position?.abbreviation || p.position?.name || '';
             const kit = p.jersey || a.jersey || '';
             return `<div class="clickable-row" onclick="openSoccerPlayer('${a.id}','${leagueSlug}')" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#1f1f3a'" onmouseout="this.style.background='transparent'">
-              <span style="font-family:'Bebas Neue',sans-serif;font-size:1rem;color:#${tDisplay2};width:24px;text-align:center">${kit}</span>
-              <span style="flex:1;color:#ddd;font-size:.95rem">🔍 ${a.displayName||'Player'}</span>
+              <img src="https://a.espncdn.com/i/headshots/soccer/players/full/${a.id}.png" style="width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid #${tDisplay2}55;flex-shrink:0" onerror="this.style.display='none'"/><span style="font-family:'Bebas Neue',sans-serif;font-size:.9rem;color:#${tDisplay2};width:20px;text-align:center;flex-shrink:0">${kit}</span>
+              <span style="flex:1;color:#ddd;font-size:.95rem">${a.displayName||'Player'}</span>
               <span style="color:#888;font-size:.8rem">${pos}</span>
             </div>`;
           }).join('')}` : '';
